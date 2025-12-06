@@ -49,6 +49,12 @@ print_warning() {
 # Check if project directory already exists
 check_directory() {
     local project_name=$1
+
+    # If using current directory, don't check existence
+    if [ "$project_name" = "." ]; then
+        return 0
+    fi
+
     if [ -d "$project_name" ]; then
         print_error "Directory '$project_name' already exists!"
         echo ""
@@ -62,12 +68,13 @@ check_directory() {
 # Show usage
 show_usage() {
     cat <<EOF
-Usage: $0 [OPTIONS] <project-name>
+Usage: $0 [OPTIONS] [project-name]
 
 Setup AI-first development template for a new project (using local template).
 
 Arguments:
-  project-name    Name of the project directory to create
+  project-name    Name of the project directory to create (optional)
+                  If not specified, templates will be installed in the current directory
 
 Options:
   -h, --help      Show this help message
@@ -75,6 +82,9 @@ Options:
   --no-git        Skip git repository initialization
 
 Examples:
+  # Install templates in current directory
+  $0
+
   # Create new project from local template
   $0 my-awesome-project
 
@@ -87,6 +97,18 @@ EOF
 # Copy template files
 copy_template_files() {
     local project_name=$1
+    local target_dir="$project_name"
+
+    # For current directory, use absolute path
+    if [ "$project_name" = "." ]; then
+        target_dir="$(pwd)"
+    fi
+
+    # Check if target is the same as source
+    if [ "$(cd "$target_dir" 2>/dev/null && pwd)" = "$SCRIPT_DIR" ]; then
+        print_warning "Target directory is the same as template source. Skipping copy."
+        return 0
+    fi
 
     print_step "Copying template files from: $SCRIPT_DIR"
 
@@ -97,7 +119,8 @@ copy_template_files() {
         --exclude='setup-local.sh' \
         --exclude='.template-metadata.json' \
         --exclude='test-project-demo' \
-        "$SCRIPT_DIR/" "$project_name/" 2>/dev/null || {
+        --exclude='PROJECT_README.md' \
+        "$SCRIPT_DIR/" "$target_dir/" 2>/dev/null || {
         print_error "Failed to copy template files"
         exit 1
     }
@@ -108,6 +131,12 @@ copy_template_files() {
 # Create project-specific files
 create_project_files() {
     local project_name=$1
+    local display_name="$project_name"
+
+    # For current directory, use the directory name
+    if [ "$project_name" = "." ]; then
+        display_name="$(basename "$(pwd)")"
+    fi
 
     print_step "Creating project-specific files..."
 
@@ -196,7 +225,7 @@ EOF
 
     # Create project README
     cat > "$project_name/PROJECT_README.md" <<EOF
-# $project_name
+# $display_name
 
 AIファースト開発テンプレートを使用したプロジェクトです。
 
@@ -229,7 +258,7 @@ $(date '+%Y-%m-%d %H:%M:%S')
 ## ドキュメント構造
 
 \`\`\`
-$project_name/
+$display_name/
 ├── docs/                          # ドキュメント
 │   ├── product/                   # プロダクト定義
 │   ├── architecture/              # アーキテクチャ
@@ -289,13 +318,19 @@ Template version: ${TEMPLATE_VERSION}
 # Create project metadata
 create_metadata() {
     local project_name=$1
+    local display_name="$project_name"
+
+    # For current directory, use the directory name
+    if [ "$project_name" = "." ]; then
+        display_name="$(basename "$(pwd)")"
+    fi
 
     cat > "$project_name/.template-metadata.json" <<EOF
 {
   "template_version": "${TEMPLATE_VERSION}",
   "template_source": "local",
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "project_name": "$project_name"
+  "project_name": "$display_name"
 }
 EOF
 }
@@ -310,21 +345,29 @@ print_next_steps() {
     print_message "$GREEN" "═══════════════════════════════════════════════════════════"
     echo ""
 
-    echo "Your AI-first development project is ready at: $project_name/"
+    if [ "$project_name" = "." ]; then
+        echo "Your AI-first development templates have been installed in the current directory."
+    else
+        echo "Your AI-first development project is ready at: $project_name/"
+    fi
     echo ""
     echo "Next steps:"
     echo ""
-    echo "  1. Navigate to your project:"
-    print_message "$BLUE" "     cd $project_name"
-    echo ""
-    echo "  2. Review the project README:"
+
+    if [ "$project_name" != "." ]; then
+        echo "  1. Navigate to your project:"
+        print_message "$BLUE" "     cd $project_name"
+        echo ""
+    fi
+
+    echo "  $([ "$project_name" = "." ] && echo "1" || echo "2"). Review the project README:"
     print_message "$BLUE" "     cat PROJECT_README.md"
     echo ""
-    echo "  3. Customize project information:"
+    echo "  $([ "$project_name" = "." ] && echo "2" || echo "3"). Customize project information:"
     print_message "$BLUE" "     \$EDITOR docs/product/vision.md"
     print_message "$BLUE" "     \$EDITOR docs/product/requirements.yaml"
     echo ""
-    echo "  4. Start using AI agents:"
+    echo "  $([ "$project_name" = "." ] && echo "3" || echo "4"). Start using AI agents:"
     print_message "$BLUE" "     # Reference CLAUDE.md for AI instructions"
     echo ""
     print_success "Happy AI-driven development! 🚀"
@@ -364,16 +407,14 @@ main() {
         esac
     done
 
-    # Check if project name is provided
+    # If no project name is provided, use current directory
     if [ -z "$project_name" ]; then
-        print_error "Project name is required"
-        echo ""
-        show_usage
-        exit 1
+        project_name="."
+        print_warning "No project name specified. Installing templates in current directory."
     fi
 
-    # Validate project name
-    if [[ ! "$project_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    # Validate project name (skip validation for current directory)
+    if [ "$project_name" != "." ] && [[ ! "$project_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         print_error "Invalid project name. Use only letters, numbers, hyphens, and underscores."
         exit 1
     fi
@@ -390,9 +431,13 @@ main() {
     create_project_files "$project_name"
     create_metadata "$project_name"
 
-    # Initialize git if not skipped
+    # Initialize git if not skipped (skip for current directory if already a git repo)
     if [ "$skip_git" = false ]; then
-        init_git "$project_name"
+        if [ "$project_name" = "." ] && [ -d ".git" ]; then
+            print_warning "Git repository already exists. Skipping git initialization."
+        else
+            init_git "$project_name"
+        fi
     fi
 
     # Print next steps
